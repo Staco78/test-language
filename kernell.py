@@ -240,7 +240,7 @@ class ParserRegister:
         self.error = None
         self.result = None
 
-    def register(self, res):
+    def getValue(self, res):
         if isinstance(res, ParserRegister):
             self.error = res.error
             self.result = res.result
@@ -252,86 +252,11 @@ class ParserRegister:
         self.error = error
         return self
 
-
-# class t:
-#     def __init__(self, tokens):
-#         self.tokens = tokens
-#         self.pos = -1
-#         self.register = ParserRegister()
-#         self.advance()
-
-#     def advance(self):
-#         self.pos += 1
-#         if self.pos < len(self.tokens):
-#             self.current_tok = self.tokens[self.pos]
-#         return self.current_tok
-
-#     def parse(self):
-#         self.expr()
-#         return self.register
-
-#     def factor(self):
-#         tok = self.current_tok
-
-#         if tok.type in (TT_PLUS, TT_MINUS):
-#             self.advance()
-#             factor = self.factor()
-#             return UnaryOpNode(tok, factor)
-
-#         elif tok.type in (TT_INT, TT_FLOAT):
-#             self.advance()
-#             return self.register.register(NumberNode(tok))
-
-#         elif tok.type == TT_LPARENT:
-#             self.advance()
-#             expr = self.expr()
-#             if self.current_tok.type == TT_RPARENT:
-#                 self.advance()
-#                 return self.register.register(expr)
-#             else:
-#                 return self.register.failed(InvalidSyntaxError("Expected ')'"))
-
-#         elif tok.type == TT_KEYWORD:
-#             return self.register.register(self.keyword(tok))
-
-#         elif tok.type == TT_IDENTIFIER:
-#             self.advance()
-#             if self.current_tok.type == TT_EQ:
-#                 self.advance()
-#                 return self.register.register(DefineVarNode(tok, self.register.register(self.expr()), False))
-#             return self.register.register(AccessVarNode(tok))
-
-#         return self.register.failed(InvalidSyntaxError("Expected int or float"))
-
-#     def term(self):
-#         return self.bin_op(self.factor, (TT_MUL, TT_DIVIDE))
-
-#     def expr(self):
-#         return self.bin_op(self.term, (TT_PLUS, TT_MINUS))
-
-#     def keyword(self, token):
-#         if token.value == "let":
-#             self.advance()
-#             if self.current_tok.type == TT_IDENTIFIER:
-#                 var_name = self.current_tok
-#                 self.advance()
-#                 if self.current_tok.type == TT_EQ:
-#                     self.advance()
-#                     return self.register.register(DefineVarNode(var_name, self.register.register(self.expr())))
-#                 else:
-#                     return self.register.register(DefineVarNode(var_name, undefined()))
-#             else:
-#                 return self.register.failed(RuntimeError("Expected identifier"))
-
-#     def bin_op(self, func, ops):
-#         left = func()
-#         while self.current_tok.type in ops:
-#             op_tok = self.current_tok
-#             self.advance()
-#             right = func()
-#             left = BinOpNode(left, op_tok, right)
-#         return self.register.register(left)
-
+    def success(self, result):
+        if isinstance(result, ParserRegister):
+            return result
+        self.result = result
+        return self
 
 class Parser:
     def __init__(self, tokens):
@@ -340,7 +265,8 @@ class Parser:
         self.advance()
 
     def parse(self):
-        return self.expr()
+        register = ParserRegister()
+        return register.success(self.expr())
 
 
     def advance(self):
@@ -350,18 +276,22 @@ class Parser:
         return self.current_tok
 
     def bin_op(self, ops, func):
-        left = func()
+        register = ParserRegister()
+        left = register.getValue(func())
+        if register.error: return register
 
         while self.current_tok.type in ops:
             op_tok = self.current_tok
             self.advance()
-            right = func()
+            right = register.getValue(func())
+            if register.error: return register
             left = BinOpNode(left, op_tok, right)
 
-        return left
+        return register.success(left)
 
 
     def expr(self):
+        register = ParserRegister()
         if self.current_tok.type == TT_KEYWORD:
             if self.current_tok.value == "let":
                 self.advance()
@@ -370,51 +300,75 @@ class Parser:
                     self.advance()
                     if self.current_tok.type == TT_EQ:
                         self.advance()
-                        return DefineVarNode(var_name, self.expr())
+                        expr = register.getValue(self.expr())
+                        if register.error: return register
+                        return register.success(DefineVarNode(var_name, expr))
                     else:
-                        return DefineVarNode(var_name, undefined())
+                        return register.success(DefineVarNode(var_name, undefined()))
                 else:
-                    raise RuntimeError("Expected identifier")
+                    return register.failed(InvalidSyntaxError("Expected ')'"))
                 
-        return self.bin_op((TT_AND, TT_OR), self.comp_expr)
+        return register.success(self.bin_op((TT_AND, TT_OR), self.comp_expr))
 
     def comp_expr(self):
+        register = ParserRegister()
+
         if self.current_tok == TT_NOT:
             self.advance()
-            return InverseNode(self.expr())
+            expr = register.getValue(self.expr())
+            if register.error: return register
+            return register.success(InverseNode(expr))
 
-        return self.bin_op((TT_EE, TT_NE, TT_GT, TT_GTE, TT_LT, TT_LTE), self.arith_expr)
+        register.getValue(self.bin_op((TT_EE, TT_NE, TT_GT, TT_GTE, TT_LT, TT_LTE), self.arith_expr))
+        if register.error: return register
+        return register
 
     def arith_expr(self):
-        return self.bin_op((TT_PLUS, TT_MINUS), self.term)
+        register = ParserRegister()
+        register.getValue(self.bin_op((TT_PLUS, TT_MINUS), self.term))
+        if register.error: return register
+        return register
 
     def term(self):
-        return self.bin_op((TT_MUL, TT_DIVIDE), self.factor)
+        register = ParserRegister()
+        register.getValue(self.bin_op((TT_MUL, TT_DIVIDE), self.factor))
+        if register.error: return register
+        return register
 
     def factor(self):
+        register = ParserRegister()
         token = self.current_tok
         if self.current_tok.type in (TT_PLUS, TT_MINUS):
             self.advance()
-            return UnaryOpNode(token, self.factor())
+            return register.success(UnaryOpNode(token, register.getValue(self.factor())))
 
-        return self.atom()
+        register.getValue(self.atom())
+        if register.error: return register
+        return register
 
     def atom(self):
+        register = ParserRegister()
         token = self.current_tok
 
         if self.current_tok.type == TT_INT or self.current_tok.type == TT_FLOAT:
             self.advance()
-            return NumberNode(token)
+            return register.success(NumberNode(token))
         elif self.current_tok.type == TT_IDENTIFIER:
             self.advance()
-            return AccessVarNode(token)
+            if self.current_tok.type == TT_EQ:
+                self.advance()
+                return register.success(DefineVarNode(token, register.getValue(self.expr()), False))
+            return register.success(AccessVarNode(token))
         elif self.current_tok.type == TT_LPARENT:
             self.advance()
-            expr = self.expr()
+            register.getValue(self.expr())
+            if register.error: return register
             if self.current_tok == TT_RPARENT:
                 self.advance()
-                return expr
-            raise InvalidSyntaxError("Expected ')'")
+                return register
+            return register.failed(InvalidSyntaxError("Expected ')'"))
+
+        return register.failed(InvalidSyntaxError("Expected int, float, identifier, '+', '-', '('"))
 
     
 
@@ -529,11 +483,12 @@ def run(text):
     print(tokens)
 
     parser = Parser(tokens)
-    result = parser.parse()
-    print(result)
+    parser_result = parser.parse()
+    if parser_result.error: return None, parser_result.error
+    print(parser_result.result)
 
     runtime = Runtime()
-    runtime_result = runtime.exec(result)
+    runtime_result = runtime.exec(parser_result.result)
     if runtime_result.error:
         return None, runtime_result.error
 
