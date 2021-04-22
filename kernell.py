@@ -225,6 +225,7 @@ class AccessVarNode:
     def __repr__(self):
         return f"access {self.var_name_token}"
 
+
 class InverseNode:
     def __init__(self, node):
         self.node = node
@@ -258,6 +259,7 @@ class ParserRegister:
         self.result = result
         return self
 
+
 class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
@@ -268,7 +270,6 @@ class Parser:
         register = ParserRegister()
         return register.success(self.expr())
 
-
     def advance(self):
         self.pos += 1
         if self.pos < len(self.tokens):
@@ -278,17 +279,18 @@ class Parser:
     def bin_op(self, ops, func):
         register = ParserRegister()
         left = register.getValue(func())
-        if register.error: return register
+        if register.error:
+            return register
 
         while self.current_tok.type in ops:
             op_tok = self.current_tok
             self.advance()
             right = register.getValue(func())
-            if register.error: return register
+            if register.error:
+                return register
             left = BinOpNode(left, op_tok, right)
 
         return register.success(left)
-
 
     def expr(self):
         register = ParserRegister()
@@ -301,13 +303,14 @@ class Parser:
                     if self.current_tok.type == TT_EQ:
                         self.advance()
                         expr = register.getValue(self.expr())
-                        if register.error: return register
+                        if register.error:
+                            return register
                         return register.success(DefineVarNode(var_name, expr))
                     else:
                         return register.success(DefineVarNode(var_name, undefined()))
                 else:
                     return register.failed(InvalidSyntaxError("Expected ')'"))
-                
+
         return register.success(self.bin_op((TT_AND, TT_OR), self.comp_expr))
 
     def comp_expr(self):
@@ -316,23 +319,28 @@ class Parser:
         if self.current_tok == TT_NOT:
             self.advance()
             expr = register.getValue(self.expr())
-            if register.error: return register
+            if register.error:
+                return register
             return register.success(InverseNode(expr))
 
-        register.getValue(self.bin_op((TT_EE, TT_NE, TT_GT, TT_GTE, TT_LT, TT_LTE), self.arith_expr))
-        if register.error: return register
+        register.getValue(self.bin_op(
+            (TT_EE, TT_NE, TT_GT, TT_GTE, TT_LT, TT_LTE), self.arith_expr))
+        if register.error:
+            return register
         return register
 
     def arith_expr(self):
         register = ParserRegister()
         register.getValue(self.bin_op((TT_PLUS, TT_MINUS), self.term))
-        if register.error: return register
+        if register.error:
+            return register
         return register
 
     def term(self):
         register = ParserRegister()
         register.getValue(self.bin_op((TT_MUL, TT_DIVIDE), self.factor))
-        if register.error: return register
+        if register.error:
+            return register
         return register
 
     def factor(self):
@@ -343,7 +351,8 @@ class Parser:
             return register.success(UnaryOpNode(token, register.getValue(self.factor())))
 
         register.getValue(self.atom())
-        if register.error: return register
+        if register.error:
+            return register
         return register
 
     def atom(self):
@@ -362,17 +371,19 @@ class Parser:
         elif self.current_tok.type == TT_LPARENT:
             self.advance()
             register.getValue(self.expr())
-            if register.error: return register
-            if self.current_tok == TT_RPARENT:
+            if register.error:
+                return register
+            if self.current_tok.type == TT_RPARENT:
                 self.advance()
                 return register
-            return register.failed(InvalidSyntaxError("Expected ')'"))
+            return register.failed(InvalidSyntaxError(f"Expected ')' find '{self.current_tok}'"))
+        elif self.current_tok.type == TT_NOT:
+            self.advance()
+            expr = register.getValue(self.expr())
+            if register.error: return register
+            return register.success(InverseNode(expr))
 
         return register.failed(InvalidSyntaxError("Expected int, float, identifier, '+', '-', '('"))
-
-    
-
-        
 
 
 ##################################
@@ -421,26 +432,19 @@ class Runtime:
         if register.error:
             return register
 
-        if node.op_tok.type == TT_PLUS:
-            result, error = left.add(right)
-            if error:
-                return register.failed(error)
+        if node.op_tok.type == TT_AND:
+            register.register(types.Boolean(left.isTrue() and right.isTrue()))
+            return register
+        elif node.op_tok.type == TT_OR:
+            register.register(types.Boolean(left.isTrue() or right.isTrue()))
+            return register
+
+        try:
+            result, error = getattr(left, f"operator_{node.op_tok.type}")(right)
+            if error: return register.failed(error)
             return register.register(result)
-        elif node.op_tok.type == TT_MINUS:
-            result, error = left.min(right)
-            if error:
-                return register.failed(error)
-            return register.register(result)
-        elif node.op_tok.type == TT_MUL:
-            result, error = left.mul(right)
-            if error:
-                return register.failed(error)
-            return register.register(result)
-        elif node.op_tok.type == TT_DIVIDE:
-            result, error = left.divide(right)
-            if error:
-                return register.failed(error)
-            return register.register(result)
+        except AttributeError:
+            return register.failed(RuntimeError(f"Operation token '{node.op_tok}' not recognized"))
 
     def exec_UnaryOpNode(self, node):
         register = RuntimeRegister()
@@ -465,6 +469,13 @@ class Runtime:
         register.register(global_object.get(node.var_name_token.value))
         return register
 
+    def exec_InverseNode(self, node):
+        register = RuntimeRegister()
+        right = register.register(self.exec(node.node))
+        if register.error: return register
+        register.register(types.Boolean(not types.Boolean(right).isTrue()))
+        return register
+
 
 global_object = symbolTable()
 global_object.set("undefined", types.undefined())
@@ -484,8 +495,9 @@ def run(text):
 
     parser = Parser(tokens)
     parser_result = parser.parse()
-    if parser_result.error: return None, parser_result.error
     print(parser_result.result)
+    if parser_result.error:
+        return None, parser_result.error
 
     runtime = Runtime()
     runtime_result = runtime.exec(parser_result.result)
